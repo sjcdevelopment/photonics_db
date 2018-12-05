@@ -1,12 +1,11 @@
 <?php
 
-error_reporting(E_ERROR | E_PARSE);
+#error_reporting(E_ERROR | E_PARSE);
 #include('../header.php');
 include('utilities.inc');
 include('utilities_pho.inc');
 $util=new utilities();
 $util_pho = new utilities_pho();
-//================= parse flash ========================//
 
 function is_float_num($num) {
 	
@@ -74,24 +73,21 @@ function file_get_header_array(&$handle,$start,$stop,$delim) {
 
 		}
 
-		while(!feof($handle) && !stristr($string[0],$stop)) {	
+		while(!feof($handle) && $string[0] != $stop) {	
 			
 			$key = $string[0];
 			$util_pho->db_safe_name($string[0]);
 			$val = addslashes(trim($string[1]));
 
 			$header[$key]=array('val'=>$val,'type'=>type_guess($val));
-			if (stristr($key,"date")) {
-				$header[$key]['val'] =  "01012001";
-				#print_r($header);
-				#$util->parse_datetime($val);
-			}
+		
 			$string = fgetcsv($handle,0,$delim);
+			
+			
 		}
-		$key = "date";
+		$key = $string[0];
 		$util_pho->db_safe_name($string[0]);
 		$val = addslashes(trim($string[1]));
-
 		$header[$key]=array('val'=>$val,'type'=>type_guess($val));
 
 		
@@ -113,7 +109,7 @@ function file_get_data_array(&$handle,$start='',$start_after='',$stop='',$num=0,
 	$count = 0;
 	$data  =array();
 
-	while(!feof($handle) && !stristr($string[0],$stop)) {
+	while(!feof($handle) && $string[0] != $stop) {
 		if ($stop != '') {
 			if(stristr($string[0],$stop)) break;
 		}
@@ -162,62 +158,65 @@ function array_transpose_2d($array){
 	
 	return $ret;
 }
-#THIS IS WHERE TO GO CHANGE ONCE WE FIX FLASH FILES TO DETECTOR FILES
-function convert_header_to_pho_db_compatible($array,$operator,$id){
+
+function convert_header_to_pho_db_compatible_eels($array,$operator,$id){
 	$array['session_date'] = $array['Session Date'];
-	$array['measurement_date'] = $array['Date'];
-	$array['input_current_ma'] = $array['Isotype Scalar'];
-	$array['incident_power_density_mw'] = $array['Corrected Irradiance (W/cm_sq)'];
-	$array['incident_power_mw'] = $array['P_In (W)'];
-	$array['ambient_temperature'] = $array['Ambient Temperature (degrees C)'];
-	$array['chuck_temperature'] = $array['Chuck Temperature (degrees C)'];
-	$array['detector_measurement_recipe_id']['val'] = $array['Detector Measurement Recipe ID'];
-	$array['reverse_breakdown']['val'] = $array['Reverse Breakdown'];
-	$array['comments'] = $array['Comment'];
+	$array['measurement_date'] = $array['Measurement Date'];
+	$array['threshold_current_ma'] = $array['Threshold Current (mA)'];
+	$array['threshold_voltage_v'] = $array['Threshold Voltage (V)'];
+	$array['slope_efficiency'] = $array['Slope Efficiency'];
+	$array['temperature'] = $array['Temperature'];
+	$array['liv_measurement_recipe_id'] = $array['Measurement Recipe ID'];
+	$array['comments'] = $array['Comments'];
 	$array['device_id']['val'] = $id;
 	$array['operator']['val'] = $operator;
 	unset($array['Session Date']);
-	unset($array['Date']);
-	unset($array['Isotype Scalar']);
-	unset($array['Corrected Irradiance']);
-	unset($array['P_In (W)']);
-	unset($array['Ambient Temperature']);
-	unset($array['Chuck Temperature']);
-	unset($array['Comment']);
+	unset($array['Measurement Date']);
+	unset($array['Threshold Currrent (mA)']);
+	unset($array['Threshold Voltage (V)']);
+	unset($array['Slope Efficiency']);
+	unset($array['Temperature']);
+	unset($array['Measurement Recipe ID']);
+	unset($array['Comments']);
 	return $array;
 }
 
-function convert_data_to_pho_db_compatible($array){
+function convert_data_to_pho_db_compatible_eels($array){
 	$array = array_map(function($tag) {
     return array(
         'voltage_v' => $tag['V'],
-        'current_ma' => $tag['I']
+        'current_ma' => $tag['I'],
+        'power_mw' => $tag['P']
     );
 }, $array);
 	return $array;
 }
 
 
-function get_device_id($x, $y, $wafername){
+function get_eels_device_id($data){
 	global $util;
 	global $util_pho;
 	
+	$wafername = $data['sample'];
+
+	
+
 	$query = "SELECT wafer_id FROM epi_wafer WHERE wafer_name = '" . $wafername . "'";
 	$wafer_id = $util->local_query($query)[0]['wafer_id'];
 
 	$query = "SELECT device_mask_id FROM epi_wafer WHERE wafer_id = " .$wafer_id;
 	$mask_id = $util->local_query($query)[0]['device_mask_id'];
 
-	$query = "SELECT detector_part_id FROM detector_mask_info WHERE x_loc= " . $x ." AND y_loc= "  . $y ." AND mask_id= " . $mask_id;	
-	$part_id = $util_pho->local_query($query)[0]['detector_part_id'];
+	$query = "SELECT eels_part_id FROM eels_mask_info WHERE part_name= '" . $data['part_name'] . "' AND mask_id= " . $mask_id;	
+	$part_id = $util_pho->local_query($query)[0]['eels_part_id'];
 
 	$query = "SELECT device_id FROM relations_table WHERE part_id= " . $part_id ." AND wafer_id= "  . $wafer_id;
 	$device_id = $util_pho->local_query($query)[0]['device_id'];
-	
+
 	return $device_id;
 }
 
-function parse_detector($data,$file){
+function parse_eels_liv($data,$file){
 	global $util;
 	global $util_pho;
 	
@@ -227,23 +226,21 @@ function parse_detector($data,$file){
 	if($result != NULL ) {
 		return array('error'=>4,'point'=>'Previously Uploaded');
 	}
-
 	$init = false;
-	
+
  	$handle = fopen($file, "r");
 	
 	if ($handle == NULL ){
 		return array('error'=>3,'point'=>'File Read Error');
 	}
 	
-	$header = file_get_header_array($handle,'','Voc Fit (V)',",");
-
-	$dat = file_get_data_array($handle,'V','P','',3,'row',",",array());
+	$header = file_get_header_array($handle,'','Comments',",");
+	$dat = file_get_data_array($handle,'V','','',0,'row',",",array());
 
 	
-	$header_table = 'detector_measurement_parameters';
-	$header_table_id = 'detector_sweep_measurement_id'; 
-	$data_table = 'detector_measurement_liv_data';
+	$header_table = 'laser_liv_measurement_parameters';
+	$header_table_id = 'liv_measurement_id'; 
+	$data_table = 'laser_liv_measurement_raw_data';
 	
 	$header_fields = $util_pho->get_table_columns($header_table);
 	$data_fields = 	$util_pho->get_table_columns($data_table);
@@ -251,25 +248,24 @@ function parse_detector($data,$file){
 	#$util->echo_r($header_fields);
 	#$util->echo_r($data_fields);
 	
-	$header_skip = array('detector_sweep_measurement_id');
+	$header_skip = array('liv_measurement_id');
 	$header_fields = array_diff($header_fields,$header_skip);
 
 	#$util->echo_r($header);
 	#$util->echo_r($dat);
 	#print_r($data);
-	$data_skip = array('detector_raw_data_id','detector_sweep_measurement_id');
+	$data_skip = array('liv_raw_data_id','liv_measurement_id');
 	$data_fields = array_diff($data_fields,$data_skip);
 
-	$id = get_device_id($header['X Coord']['val'], $header['Y Coord']['val'], $data['sample']);
-	$header = convert_header_to_pho_db_compatible($header,$data['user'],9804);
-	#$util->echo_r($header);
-
+	$id = get_eels_device_id($data);
+	$header = convert_header_to_pho_db_compatible_eels($header,$data['user'],$id);
+	#$util->echo_r($header_fields);
 	
 	$query = "insert into $header_table set ";
 	foreach ($header_fields as $f ) {
 		$query.= "`$f` = '".addslashes($header[$f]['val'])."',";
 	}
-	$query .= " detector_sweep_measurement_id = ''";
+	$query .= " liv_measurement_id = ''";
 
 	$result = $util_pho->local_insert($query);
 	if($result == NULL ) {
@@ -277,15 +273,15 @@ function parse_detector($data,$file){
 	}
 	
 	$query = "SELECT max(detector_sweep_measurement_id) FROM detector_measurement_parameters";
-	$detector_sweep_measurement_id = $util_pho->local_query($query)[0]['max(detector_sweep_measurement_id)'];
+	$liv_measurement_id = $util_pho->local_query($query)[0]['max(detector_sweep_measurement_id)'];
 
 
-	if($detector_sweep_measurement_id == NULL ) {
+	if($liv_measurement_id == NULL ) {
 		return array('error'=>2,'point'=>$query);
 	}
 	
 	$tmp = array_transpose_2d($dat);
-	$tmp = convert_data_to_pho_db_compatible($tmp);
+	$tmp = convert_data_to_pho_db_compatible_eels($tmp);
 	#$util->echo_r($tmp);
 
 	foreach ($tmp as $t) {
@@ -293,8 +289,7 @@ function parse_detector($data,$file){
 		foreach ($data_fields as $f) {
 			$query .= " `$f` = '".$t[$f]."',";
 		}
-		$query .= " `$header_table_id` = '".$detector_sweep_measurement_id."'";
-		#echo "<br> $query";
+		$query .= " `$header_table_id` = '".$liv_measurement_id."'";
 
 		$result = $util_pho->local_insert($query);
 		if($result == NULL ) {
@@ -305,21 +300,20 @@ function parse_detector($data,$file){
 	$query = "INSERT into uploaded_filenames SET filename = '" . basename($file) ."'";
 
 	$util_pho->local_insert($query);
-
-	return  array('error'=>0,'data_id'=>$detector_sweep_measurement_id);
+	return  array('error'=>0,'data_id'=>$liv_measurement_id);
 
 }
 
 
-$file = 'C:\Users\sswifter\Desktop\Detector Data\SJC_ENG_370_4-GaAs\A-3680-3-A\IV\Open_Diode_70\0 mW\A-3680-3-A_sswifter_Flash-Open_Diode_70-072418_103216.8AM-_updated.csv';
-$data = $util->file_name_extract($file);
-$handle = fopen($file, "r");
-$out = parse_detector($data,$file);
-$util->echo_r($out)
-#echo "<hr>";
-#print_r($data);
-#$handle = fopen($file, "r");
-#$header = file_get_header_array($handle,'','Efficiency',",");
 
-#file_get_data_array(&$handle,$start='',$start_after='',$stop='',$num=0,$row_col = 'row',$delim,$field_def = array())
+
+
+$file = 'C:\Users\sswifter\Desktop\TGR-163-1_sswifter_Laser-0-0-1-15-1500-090618_094721.3AM-.csv';
+$data = $util_pho->eels_file_name_extract($file);
+#$handle = fopen($file, "r");
+$result = parse_eels_liv($data,$file);
+$util_pho->echo_r($result)
+
+
+
 ?>
